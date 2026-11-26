@@ -1284,7 +1284,15 @@ class Bond:
             if self.cpn_dts[i_flow] > settle_dt:
                 self._pcd = self.cpn_dts[i_flow - 1]
                 self._ncd = self.cpn_dts[i_flow]
-                break
+                return
+
+        if settle_dt > self.cpn_dts[-1]:
+            raise FinError("Settlement date falls after maturity date")
+
+        # Settlement on the maturity date is in the final coupon period. Do not
+        # keep the period found by an earlier call for another date.
+        self._pcd = self.cpn_dts[-2]
+        self._ncd = self.cpn_dts[-1]
 
     ###########################################################################
 
