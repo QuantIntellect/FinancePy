@@ -1276,7 +1276,7 @@ class Bond:
 
         num_flows = len(self.cpn_dts)
 
-        if num_flows == 0:
+        if num_flows < 2:
             raise FinError("Accrued interest - not enough flow dts.")
 
         for i_flow in range(1, num_flows):
@@ -1284,7 +1284,15 @@ class Bond:
             if self.cpn_dts[i_flow] > settle_dt:
                 self._pcd = self.cpn_dts[i_flow - 1]
                 self._ncd = self.cpn_dts[i_flow]
-                break
+                return
+
+        if settle_dt > self.maturity_dt:
+            raise FinError("Settlement date falls after maturity date")
+
+        # On the maturity date the buyer receives the final coupon and the
+        # principal (see dirty_price_from_ytm), so use the final coupon period
+        self._pcd = self.cpn_dts[-2]
+        self._ncd = self.cpn_dts[-1]
 
     ###########################################################################
 
@@ -1669,9 +1677,14 @@ class Bond:
         sell_price = self.dirty_price_from_ytm(end_dt, end_ytm, convention)
         dts_cfs = zip(self.payment_dts, self.flow_amounts)
 
-        # The coupon or par payments on buying date belong to the buyer. The
-        # coupon or par payments on selling date are given to the new buyer.
-        dts_cfs = [(d, c * self.par) for (d, c) in dts_cfs if (d >= begin_dt) and (d < end_dt)]
+        # A coupon paid on the buying or selling date goes to the seller, as the
+        # dirty prices assume. On the maturity date the sell price is par plus
+        # the final coupon, so the flows paid on that date are already in it.
+        dts_cfs = [
+            (d, c * self.par)
+            for (d, c) in dts_cfs
+            if begin_dt < d <= end_dt and d < self.maturity_dt
+        ]
 
         dts_cfs.append((begin_dt, -buy_price))
         dts_cfs.append((end_dt, sell_price))
