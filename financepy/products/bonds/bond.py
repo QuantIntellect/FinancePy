@@ -1276,7 +1276,7 @@ class Bond:
 
         num_flows = len(self.cpn_dts)
 
-        if num_flows == 0:
+        if num_flows < 2:
             raise FinError("Accrued interest - not enough flow dts.")
 
         for i_flow in range(1, num_flows):
@@ -1284,7 +1284,16 @@ class Bond:
             if self.cpn_dts[i_flow] > settle_dt:
                 self._pcd = self.cpn_dts[i_flow - 1]
                 self._ncd = self.cpn_dts[i_flow]
-                break
+                return
+
+        if settle_dt > self.maturity_dt:
+            raise FinError("Settlement date falls after maturity date")
+
+        # On the maturity date the buyer receives the principal, and the final
+        # coupon unless the bond is ex-dividend (see dirty_price_from_ytm), so
+        # use the final coupon period
+        self._pcd = self.cpn_dts[-2]
+        self._ncd = self.cpn_dts[-1]
 
     ###########################################################################
 
@@ -1667,11 +1676,29 @@ class Bond:
         """
         buy_price = self.dirty_price_from_ytm(begin_dt, begin_ytm, convention)
         sell_price = self.dirty_price_from_ytm(end_dt, end_ytm, convention)
-        dts_cfs = zip(self.payment_dts, self.flow_amounts)
 
-        # The coupon or par payments on buying date belong to the buyer. The
-        # coupon or par payments on selling date are given to the new buyer.
-        dts_cfs = [(d, c * self.par) for (d, c) in dts_cfs if (d >= begin_dt) and (d < end_dt)]
+        # As in the dirty prices, a settlement on or after a coupon date, or after
+        # its ex-dividend date, leaves that coupon to the seller. So the holder
+        # receives the coupons the buy price includes and the sell price does
+        # not. On the maturity date the sell price includes the final coupon
+        # unless the bond is ex-dividend.
+        cal = Calendar(self.cal_type)
+
+        def is_entitled(settle_dt, cpn_dt, ex_div_dt):
+            return settle_dt < cpn_dt and settle_dt <= ex_div_dt
+
+        dts_cfs = []
+        flows = zip(self.cpn_dts[1:], self.payment_dts[1:], self.flow_amounts[1:])
+
+        for cpn_dt, pmt_dt, flow in flows:
+            ex_div_dt = cal.add_business_days(cpn_dt, -self.ex_div_days)
+            in_sell_price = end_dt == self.maturity_dt == cpn_dt and end_dt <= ex_div_dt
+            if (
+                is_entitled(begin_dt, cpn_dt, ex_div_dt)
+                and not is_entitled(end_dt, cpn_dt, ex_div_dt)
+                and not in_sell_price
+            ):
+                dts_cfs.append((pmt_dt, flow * self.par))
 
         dts_cfs.append((begin_dt, -buy_price))
         dts_cfs.append((end_dt, sell_price))
